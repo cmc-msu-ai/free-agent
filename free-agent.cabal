@@ -1,5 +1,5 @@
 Name:                   free-agent
-Version:                0.0.0
+Version:                0.1.0
 Author:                 Nickolay Kudasov<nickolay.kudasov@gmail.com>
 Maintainer:             Nickolay Kudasov<nickolay.kudasov@gmail.com>
 Homepage:               https://github.com/fizruk/free-agent
@@ -21,9 +21,12 @@ Library
   GHC-Options:          -Wall
   Exposed-Modules:      Control.Agent.Free
                         Control.Agent.Free.Internal
+                        Control.Agent.Free.Algorithms.ABT
   Build-Depends:        base >= 4 && < 5
                       , free >= 4.2
                       , transformers >= 0.3
+                      , mtl >= 2.1
+                      , containers >= 0.5
 
 Test-Suite spec
   Type:                 exitcode-stdio-1.0
