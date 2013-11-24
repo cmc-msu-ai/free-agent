@@ -15,26 +15,29 @@
 -- <http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.60.4716>.
 ---------------------------------------------------------------------------
 module Control.Agent.Free.Algorithms.ABT (
+  module Control.Agent.Free.Interfaces.SendRecv
   -- * Algorithms
-    A
+  , A
   , abtKernel
   -- * ABT Kernel API
-  , ABTKernelF(..)
+  , ABTKernelF
   , sendOk
   , sendBacktrack
   , sendStop
-  , recv
   -- * Used data structures
+  , Constraint(..)
   , Message(..)
   , NoGood(..)
+  , AgentView
   , AgentState(..)
   , initialAgentState
 ) where
 
 import Control.Arrow
 import Control.Agent.Free
+import Control.Agent.Free.Interfaces.SendRecv
 import Control.Monad
-import Control.Monad.Trans.Free
+import Control.Monad.Free.Class
 import Control.Monad.State
 
 import qualified Data.Foldable as F
@@ -49,9 +52,9 @@ import qualified Data.Map as Map
 -- | ABT Kernel messages.
 data Message i v
   = -- | OK? message is sent to higher agents so they could check it.
-    MsgOk i v
+    MsgOk v
     -- | BACKTRACK message is sent to lower agent to force it rechoose its value.
-  | MsgNoGood i (NoGood i v)
+  | MsgBacktrack (NoGood i v)
     -- | STOP message is sent when it is know that a problem has no solution.
   | MsgStop
   deriving (Show)
@@ -66,32 +69,19 @@ data NoGood i v = NoGood
   deriving (Show)
 
 -- | Abstract interface used by ABT Kernel algorithm.
-data ABTKernelF i v next
-  = -- | Send OK? message. See also 'sendOk'.
-    SendOk i v next
-    -- | Send BACKTRACK message. See also 'sendBacktrack'.
-  | SendBacktrack i (NoGood i v) next
-    -- | Send STOP to the *system*. See also 'sendStop'.
-  | SendStop next
-    -- | Receive a message. See also 'recv'.
-  | Recv (Message i v -> next)
-  deriving (Functor)
+type ABTKernelF i v = SendRecv i (Message i v)
 
 -- | Send OK? message. Requires address of another agent and a chosen value.
 sendOk :: MonadFree (ABTKernelF i v) m => i -> v -> m ()
-sendOk i v = liftF $ SendOk i v ()
+sendOk i v = send i (MsgOk v)
 
 -- | Send BACKTRACK message. Requires address of another agent and resolved nogood store.
 sendBacktrack :: MonadFree (ABTKernelF i v) m => i -> (NoGood i v) -> m ()
-sendBacktrack i ngd = liftF $ SendBacktrack i ngd ()
+sendBacktrack i ngd = send i (MsgBacktrack ngd)
 
 -- | Send STOP message to the *system*. All agents in the system will receive this message.
-sendStop :: MonadFree (ABTKernelF i v) m => m ()
-sendStop = liftF $ SendStop ()
-
--- | Receive message.
-recv :: MonadFree (ABTKernelF i v) m => m (Message i v)
-recv = liftF $ Recv id
+sendStop :: MonadFree (ABTKernelF i v) m => i -> m ()
+sendStop i = send i MsgStop
 
 -- | Agent view is just a 'Map' from agents' adresses to agents' values.
 type AgentView i v = Map i v
@@ -147,15 +137,15 @@ msgLoop :: (Ord i, Eq v) => A i v ()
 msgLoop = do
   stop <- gets agStop
   unless stop $ do
-    msg <- recv
+    (src, msg) <- recv
     case msg of
-      MsgOk src val -> do
+      MsgOk val -> do
         agentUpdate src (Just val)
         checkAgentView
-      MsgNoGood src ngd -> do
+      MsgBacktrack ngd -> do
         resolveConflict src ngd
       MsgStop -> do
-        modify (\s -> s{ agStop = False })
+        modify (\s -> s{ agStop = True })
     msgLoop
 
 -- | Resolve conflict by
@@ -176,13 +166,14 @@ resolveConflict sender ngd = do
 -- The solution does not exist.
 stopAgent :: A i v ()
 stopAgent = do
-  modify (\s -> s{ agStop = False })
-  sendStop
+  modify (\s -> s{ agStop = True })
+  (as, bs) <- gets (agAbove &&& agBelow)
+  mapM_ sendStop (as ++ bs)
 
 -- | Update agent's view.
 agentUpdate :: (Ord i, Eq v) => i -> Maybe v -> A i v ()
 agentUpdate src val = do
-  modify (\s@AgentState{agView=view} -> s{ agView = Map.update (const val) src view })
+  modify (\s@AgentState{agView=view} -> s{ agView = Map.alter (const val) src view })
   view <- gets agView
   updateNoGoods $ filter (coherent view . ngdLHS)
 
